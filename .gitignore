@@ -1,0 +1,13 @@
+# Virtual Environment
+venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# OS generated files
+.DS_Store
+
+# Raw data files (large / uncleaned)
+/data/raw/*
+!/data/raw/.gitkeep
