@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, Component } from "react";
 import {
   Activity,
   AlertOctagon,
@@ -32,6 +32,19 @@ import {
   Bar,
   Cell,
 } from "recharts";
+
+// -----------------------------------------------------------------------------
+// Safe Formatting Helpers
+// -----------------------------------------------------------------------------
+function formatNum(val, decimals = 1, fallback = "--") {
+  if (val === null || val === undefined || isNaN(Number(val))) return fallback;
+  return Number(val).toFixed(decimals);
+}
+
+function safeRound(val, fallback = 0) {
+  if (val === null || val === undefined || isNaN(Number(val))) return fallback;
+  return Math.round(Number(val));
+}
 
 // -----------------------------------------------------------------------------
 // Constants & Domain Profiles
@@ -120,7 +133,7 @@ const PRESETS = {
   },
 };
 
-// Fallback mock data when backend server is starting up or disconnected
+// Robust default fallback when backend is disconnected
 const MOCK_HEALTH = {
   status: "healthy",
   model_architecture: "XGBoost Multi-Target Regressor",
@@ -135,7 +148,7 @@ const MOCK_HEALTH = {
   },
 };
 
-// Generate realistic synthetic curve for fallback
+// Defensive cycle generator for offline/fallback mode
 function generateFallbackCycles(cellId) {
   const count = cellId === "B0018" ? 132 : 168;
   const initialCap = cellId === "B0006" ? 2.03 : 1.86;
@@ -157,11 +170,13 @@ function generateFallbackCycles(cellId) {
       actual_soh: Number(soh.toFixed(2)),
       actual_rul: rul,
       predicted_rul: Math.max(0, rul + Math.sin(c) * 4),
-      predicted_soh: Number((soh + (Math.sin(c * 0.2) * 0.4)).toFixed(2)),
+      predicted_soh: Number((soh + Math.sin(c * 0.2) * 0.4).toFixed(2)),
       is_anomaly: isAnomaly,
       max_temp_c: Number(maxTemp.toFixed(1)),
       internal_resistance_ohm: Number((0.075 + 0.0008 * c).toFixed(4)),
       avg_voltage_v: Number((3.82 - 0.0018 * c).toFixed(4)),
+      avg_current_a: 2.0,
+      ambient_temp_c: 24.0,
     });
   }
   return {
@@ -180,7 +195,57 @@ function generateFallbackCycles(cellId) {
   };
 }
 
-export default function App() {
+// -----------------------------------------------------------------------------
+// React Error Boundary Component
+// -----------------------------------------------------------------------------
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("BatteryMind ErrorBoundary caught:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#090D16] text-slate-100 p-8 flex flex-col items-center justify-center space-y-4">
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 max-w-lg text-center space-y-3">
+            <AlertOctagon className="w-12 h-12 mx-auto text-rose-400" />
+            <h2 className="text-xl font-bold">Telemetry Console Recovered</h2>
+            <p className="text-xs text-slate-300">
+              An unexpected render anomaly was caught and neutralized.
+            </p>
+            <pre className="text-[11px] font-mono bg-slate-950 p-2.5 rounded text-rose-300 overflow-x-auto text-left">
+              {String(this.state.error?.message || "Unknown error")}
+            </pre>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                window.location.reload();
+              }}
+              className="px-4 py-2 text-xs font-bold rounded-lg bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition"
+            >
+              Reset &amp; Reload Console
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Main Application Component
+// -----------------------------------------------------------------------------
+function BatteryMindDashboard() {
   // Navigation & Domain Context State
   const [activeDomain, setActiveDomain] = useState("ev");
   const [selectedCell, setSelectedCell] = useState("B0018");
@@ -191,6 +256,7 @@ export default function App() {
   const [globalShap, setGlobalShap] = useState(null);
   const [apiConnected, setApiConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
 
   // Live Telemetry Simulator State
   const [simValues, setSimValues] = useState(PRESETS.healthy.values);
@@ -213,31 +279,33 @@ export default function App() {
   });
   const [isSimulating, setIsSimulating] = useState(false);
 
-  // Fetch Health & Global SHAP on mount
-  useEffect(() => {
-    async function initSystem() {
-      try {
-        const [resHealth, resShap] = await Promise.all([
-          fetch(`${API_BASE}/health`),
-          fetch(`${API_BASE}/explain/global`),
-        ]);
+  // Connection & Health check on mount
+  const checkHealth = useCallback(async () => {
+    try {
+      const [resHealth, resShap] = await Promise.all([
+        fetch(`${API_BASE}/health`),
+        fetch(`${API_BASE}/explain/global`),
+      ]);
 
-        if (resHealth.ok) {
-          const hData = await resHealth.json();
-          setHealthData(hData);
-          setApiConnected(true);
-        }
-        if (resShap.ok) {
-          const sData = await resShap.json();
-          setGlobalShap(sData);
-        }
-      } catch (err) {
-        console.warn("Backend not detected at localhost:8000; using integrated NASA telemetry.", err);
-        setApiConnected(false);
+      if (resHealth.ok) {
+        const hData = await resHealth.json();
+        setHealthData(hData);
+        setApiConnected(true);
+        setFetchError(null);
       }
+      if (resShap.ok) {
+        const sData = await resShap.json();
+        setGlobalShap(sData);
+      }
+    } catch (err) {
+      console.warn("Backend not detected at localhost:8000; using standalone NASA telemetry engine.", err);
+      setApiConnected(false);
     }
-    initSystem();
   }, []);
+
+  useEffect(() => {
+    checkHealth();
+  }, [checkHealth]);
 
   // Fetch Battery Data when selectedCell changes
   useEffect(() => {
@@ -246,18 +314,49 @@ export default function App() {
       setIsLoading(true);
       try {
         const res = await fetch(`${API_BASE}/batteries/${selectedCell}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!isCancelled) {
-            setBatteryData(data);
-            setApiConnected(true);
-          }
-        } else {
-          throw new Error("HTTP error " + res.status);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        if (!isCancelled) {
+          // Normalize schema defensively so no property access ever returns undefined
+          const normalizedCycles = Array.isArray(data?.cycles)
+            ? data.cycles.map((c) => {
+                const sohVal = c.soh_percent ?? c.actual_soh ?? c.SOH_Percent ?? 0;
+                const capVal = c.discharge_capacity_ah ?? c.Discharge_Capacity_Ah ?? 0;
+                const rulVal = c.actual_rul ?? c.Remaining_Useful_Life_RUL ?? 0;
+                const predRul = c.predicted_rul ?? rulVal;
+                const predSoh = c.predicted_soh ?? sohVal;
+
+                return {
+                  cycle_count: Number(c.cycle_count ?? c.Cycle_Count ?? 1),
+                  soh_percent: Number(sohVal),
+                  actual_soh: Number(sohVal),
+                  predicted_soh: Number(predSoh),
+                  discharge_capacity_ah: Number(capVal),
+                  actual_rul: Number(rulVal),
+                  predicted_rul: Number(predRul),
+                  is_anomaly: Boolean(c.is_anomaly),
+                  anomaly_score: Number(c.anomaly_score ?? 0),
+                  max_temp_c: Number(c.max_temp_c ?? c.Max_Temp_C ?? 0),
+                  internal_resistance_ohm: Number(c.internal_resistance_ohm ?? c.Internal_Resistance_Ohm ?? 0),
+                  avg_voltage_v: Number(c.avg_voltage_v ?? c.Avg_Voltage_V ?? 0),
+                  avg_current_a: Number(c.avg_current_a ?? c.Avg_Current_A ?? 0),
+                  ambient_temp_c: Number(c.ambient_temp_c ?? c.Ambient_Temp_C ?? 24),
+                };
+              })
+            : [];
+
+          setBatteryData({
+            ...data,
+            cycles: normalizedCycles,
+          });
+          setApiConnected(true);
+          setFetchError(null);
         }
       } catch (err) {
         if (!isCancelled) {
-          console.info("Using embedded telemetry for", selectedCell);
+          console.info(`Using fallback telemetry for ${selectedCell}:`, err.message);
           setBatteryData(generateFallbackCycles(selectedCell));
         }
       } finally {
@@ -270,30 +369,46 @@ export default function App() {
     };
   }, [selectedCell]);
 
-  // Debounced Simulator Prediction Call
+  // Simulator Prediction Execution
   const executePrediction = useCallback(async (params) => {
     setIsSimulating(true);
     try {
       const res = await fetch(`${API_BASE}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: jsonPayload(params),
+        body: JSON.stringify({
+          Cycle_Count: Number(params.Cycle_Count),
+          Ambient_Temp_C: Number(params.Ambient_Temp_C),
+          Avg_Voltage_V: Number(params.Avg_Voltage_V),
+          Avg_Current_A: Number(params.Avg_Current_A),
+          Max_Temp_C: Number(params.Max_Temp_C),
+          Internal_Resistance_Ohm: Number(params.Internal_Resistance_Ohm),
+          Discharge_Capacity_Ah: Number(params.Discharge_Capacity_Ah),
+        }),
       });
       if (res.ok) {
         const data = await res.json();
-        setSimResult(data);
+        setSimResult({
+          ...data,
+          predicted_rul: Number(data.predicted_rul ?? 0),
+          predicted_soh_percent: Number(data.predicted_soh_percent ?? 0),
+          anomaly_score: Number(data.anomaly_score ?? 0),
+          shap_contributions: data.shap_contributions || {},
+        });
+        setApiConnected(true);
       } else {
-        throw new Error("Inference failed");
+        throw new Error("API call error");
       }
     } catch {
-      // Local physics fallback approximation
-      const cap = params.Discharge_Capacity_Ah;
-      const resVal = params.Internal_Resistance_Ohm;
-      const temp = params.Max_Temp_C;
-      const cyc = params.Cycle_Count;
+      // Local physics fallback simulation
+      const cap = Number(params.Discharge_Capacity_Ah || 1.8);
+      const resVal = Number(params.Internal_Resistance_Ohm || 0.08);
+      const temp = Number(params.Max_Temp_C || 32);
+      const cyc = Number(params.Cycle_Count || 25);
+      const volt = Number(params.Avg_Voltage_V || 3.8);
 
       const soh = (cap / 2.0) * 100;
-      const isAnom = temp > 46.0 || resVal > 0.20 || params.Avg_Voltage_V < 3.40;
+      const isAnom = temp > 46.0 || resVal > 0.20 || volt < 3.40;
       const eolCycles = 140;
       const rul = Math.max(0, Math.round(eolCycles - cyc - (resVal - 0.08) * 400 + (cap - 1.4) * 80));
 
@@ -308,12 +423,12 @@ export default function App() {
           Discharge_Capacity_Ah: Number(((cap - 1.55) * 65).toFixed(2)),
           Cycle_Count: Number(((70 - cyc) * 0.15).toFixed(2)),
           Max_Temp_C: Number(((35 - temp) * 0.35).toFixed(2)),
-          Avg_Voltage_V: Number(((params.Avg_Voltage_V - 3.7) * 1.5).toFixed(2)),
+          Avg_Voltage_V: Number(((volt - 3.7) * 1.5).toFixed(2)),
           Avg_Current_A: 0.12,
           Ambient_Temp_C: 0.08,
         },
         prediction_summary: isAnom
-          ? "⚠️ CRITICAL ANOMALY: Excessive operating temperature or elevated impedance. Immediate cooling and charge cutoff required."
+          ? "⚠️ CRITICAL ANOMALY: Excessive operating temperature or elevated impedance. Immediate thermal cooling and cutoff required."
           : "Nominal cell operation. Telemetry within stable operational safety bounds.",
       });
     } finally {
@@ -321,19 +436,6 @@ export default function App() {
     }
   }, []);
 
-  function jsonPayload(p) {
-    return JSON.stringify({
-      Cycle_Count: Number(p.Cycle_Count),
-      Ambient_Temp_C: Number(p.Ambient_Temp_C),
-      Avg_Voltage_V: Number(p.Avg_Voltage_V),
-      Avg_Current_A: Number(p.Avg_Current_A),
-      Max_Temp_C: Number(p.Max_Temp_C),
-      Internal_Resistance_Ohm: Number(p.Internal_Resistance_Ohm),
-      Discharge_Capacity_Ah: Number(p.Discharge_Capacity_Ah),
-    });
-  }
-
-  // Update simulator values and trigger prediction
   const handleSliderChange = (key, value) => {
     const updated = { ...simValues, [key]: Number(value) };
     setSimValues(updated);
@@ -348,21 +450,20 @@ export default function App() {
     }
   };
 
-  // Derive Current Domain Info & Cell Metrics
-  const domain = DOMAINS[activeDomain];
+  const domain = DOMAINS[activeDomain] || DOMAINS.ev;
 
-  // Latest cycle of selected cell
+  // Latest cycle data
   const latestCycle = useMemo(() => {
-    if (!batteryData || !batteryData.cycles || batteryData.cycles.length === 0) {
-      return null;
-    }
+    if (!batteryData?.cycles?.length) return null;
     return batteryData.cycles[batteryData.cycles.length - 1];
   }, [batteryData]);
 
-  // Dynamic EOL status for selected cell
+  // Dynamic EOL status
   const eolStatus = useMemo(() => {
-    if (!latestCycle) return { label: "OPTIMAL", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" };
-    const soh = latestCycle.soh_percent || latestCycle.actual_soh;
+    if (!latestCycle) {
+      return { label: "OPTIMAL", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" };
+    }
+    const soh = Number(latestCycle.soh_percent ?? latestCycle.actual_soh ?? 0);
     if (soh <= domain.eolThreshold) {
       return {
         label: "EOL RETIRED",
@@ -383,15 +484,15 @@ export default function App() {
     };
   }, [latestCycle, domain]);
 
-  // Transform SHAP contributions for Horizontal Bar Chart
+  // SHAP Chart data array
   const shapChartData = useMemo(() => {
-    const contribs = simResult.shap_contributions || {};
+    const contribs = simResult?.shap_contributions || {};
     return Object.entries(contribs)
       .map(([feature, val]) => ({
         feature: feature.replace(/_/g, " "),
         rawFeature: feature,
-        impact: Number(val),
-        isPositive: Number(val) >= 0,
+        impact: Number(val || 0),
+        isPositive: Number(val || 0) >= 0,
       }))
       .sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
   }, [simResult]);
@@ -416,19 +517,20 @@ export default function App() {
                   v1.0 Live XAI
                 </span>
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full border ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-full border cursor-pointer ${
                     apiConnected
                       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
                       : "border-amber-500/30 bg-amber-500/10 text-amber-400"
                   }`}
-                  title={apiConnected ? "Connected to FastAPI localhost:8000" : "Standalone Engine Active"}
+                  onClick={checkHealth}
+                  title="Click to reconnect with FastAPI server"
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${apiConnected ? "bg-emerald-400 animate-pulse" : "bg-amber-400"}`} />
-                  {apiConnected ? "FastAPI Connected" : "Local Engine"}
+                  {apiConnected ? "FastAPI Connected" : "Local Telemetry Mode"}
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-400">
-                Li-Ion Battery Degradation Prognostics, Anomaly Detection & Explainable AI
+                Li-Ion Battery Degradation Prognostics, Anomaly Detection &amp; Explainable AI
               </p>
             </div>
           </div>
@@ -515,14 +617,14 @@ export default function App() {
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black tracking-tight text-white font-mono">
-              {latestCycle ? `${latestCycle.soh_percent.toFixed(1)}%` : "--"}
+              {latestCycle ? `${formatNum(latestCycle.soh_percent ?? latestCycle.actual_soh, 1)}%` : "--"}
             </span>
             <span className="text-xs text-slate-400">
               of rated 2.0 Ah
             </span>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/60 pt-2.5">
-            <span>Capacity: <strong className="text-slate-200 font-mono">{latestCycle ? `${latestCycle.discharge_capacity_ah} Ah` : "--"}</strong></span>
+            <span>Capacity: <strong className="text-slate-200 font-mono">{latestCycle ? `${formatNum(latestCycle.discharge_capacity_ah, 3)} Ah` : "--"}</strong></span>
             <span>EOL Gate: <strong className="text-rose-400 font-mono">{domain.eolThreshold}%</strong></span>
           </div>
         </div>
@@ -539,15 +641,15 @@ export default function App() {
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black tracking-tight text-cyan-400 font-mono">
-              {latestCycle ? Math.round(latestCycle.predicted_rul) : "--"}
+              {latestCycle ? safeRound(latestCycle.predicted_rul ?? latestCycle.actual_rul) : "--"}
             </span>
             <span className="text-xs text-slate-400">
               cycles remaining
             </span>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/60 pt-2.5">
-            <span>Cycle Index: <strong className="text-slate-200 font-mono">{latestCycle ? latestCycle.cycle_count : "--"}</strong></span>
-            <span>Total Logged: <strong className="text-slate-200 font-mono">{batteryData ? batteryData.total_cycles : "--"}</strong></span>
+            <span>Cycle Index: <strong className="text-slate-200 font-mono">{latestCycle?.cycle_count || "--"}</strong></span>
+            <span>Total Logged: <strong className="text-slate-200 font-mono">{batteryData?.total_cycles || "--"}</strong></span>
           </div>
         </div>
 
@@ -563,7 +665,7 @@ export default function App() {
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black tracking-tight text-white font-mono">
-              {batteryData ? batteryData.anomaly_count : 0}
+              {batteryData?.anomaly_count ?? 0}
             </span>
             <span className="text-xs text-slate-400">
               anomalous cycles flagged
@@ -571,7 +673,7 @@ export default function App() {
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/60 pt-2.5">
             <span className="truncate">
-              Cycles: <strong className="text-rose-400 font-mono">{batteryData?.anomalous_cycles?.join(", ") || "None"}</strong>
+              Cycles: <strong className="text-rose-400 font-mono">{batteryData?.anomalous_cycles?.length ? batteryData.anomalous_cycles.join(", ") : "None detected"}</strong>
             </span>
           </div>
         </div>
@@ -590,20 +692,20 @@ export default function App() {
             <div>
               <span className="text-xs text-slate-400 block font-medium">SOH R²</span>
               <span className="text-2xl font-black text-emerald-400 font-mono">
-                {healthData?.metrics?.SOH_Percent?.r2?.toFixed(3) || "0.977"}
+                {formatNum(healthData?.metrics?.SOH_Percent?.r2, 3, "0.977")}
               </span>
             </div>
             <div className="h-7 w-[1px] bg-slate-800" />
             <div>
               <span className="text-xs text-slate-400 block font-medium">RUL RMSE</span>
               <span className="text-2xl font-black text-white font-mono">
-                {healthData?.metrics?.Remaining_Useful_Life_RUL?.rmse?.toFixed(1) || "23.2"}
+                {formatNum(healthData?.metrics?.Remaining_Useful_Life_RUL?.rmse, 1, "23.2")}
               </span>
             </div>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/60 pt-2.5">
-            <span>RUL R²: <strong className="text-slate-200 font-mono">{healthData?.metrics?.Remaining_Useful_Life_RUL?.r2?.toFixed(3) || "0.542"}</strong></span>
-            <span>SOH MAE: <strong className="text-emerald-400 font-mono">{healthData?.metrics?.SOH_Percent?.mae?.toFixed(2) || "1.13"}%</strong></span>
+            <span>RUL R²: <strong className="text-slate-200 font-mono">{formatNum(healthData?.metrics?.Remaining_Useful_Life_RUL?.r2, 3, "0.542")}</strong></span>
+            <span>SOH MAE: <strong className="text-emerald-400 font-mono">{formatNum(healthData?.metrics?.SOH_Percent?.mae, 2, "1.13")}%</strong></span>
           </div>
         </div>
       </section>
@@ -638,7 +740,7 @@ export default function App() {
           </div>
 
           <div className="h-[340px] w-full">
-            {isLoading || !batteryData ? (
+            {isLoading || !batteryData?.cycles ? (
               <div className="h-full flex items-center justify-center text-slate-500 text-sm">
                 <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Loading cell telemetry...
               </div>
@@ -729,7 +831,7 @@ export default function App() {
               </span>
             </div>
             <p className="text-xs text-slate-400 mb-3">
-              Additive feature impacts relative to base RUL ({simResult.base_rul || 69.1} cycles).
+              Additive feature impacts relative to base RUL ({formatNum(simResult?.base_rul, 1, "69.1")} cycles).
               <span className="text-emerald-400 ml-1 font-medium">Green = Extends RUL</span>,
               <span className="text-rose-400 ml-1 font-medium">Red = Accelerates EOL</span>.
             </p>
@@ -774,7 +876,7 @@ export default function App() {
 
           <div className="mt-3 p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300">
             <strong className="text-cyan-400 block mb-0.5">Top Insight:</strong>
-            {simResult.prediction_summary || "Telemetry within nominal boundaries."}
+            {simResult?.prediction_summary || "Telemetry within nominal boundaries."}
           </div>
         </div>
       </section>
@@ -833,8 +935,8 @@ export default function App() {
                 <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <Thermometer className="w-3.5 h-3.5 text-rose-400" /> Max Temperature
                 </span>
-                <span className={`font-mono font-bold ${simValues.Max_Temp_C >= 45 ? "text-rose-400" : "text-cyan-400"}`}>
-                  {simValues.Max_Temp_C.toFixed(1)} °C
+                <span className={`font-mono font-bold ${(simValues?.Max_Temp_C || 0) >= 45 ? "text-rose-400" : "text-cyan-400"}`}>
+                  {formatNum(simValues?.Max_Temp_C, 1)} °C
                 </span>
               </div>
               <input
@@ -842,7 +944,7 @@ export default function App() {
                 min="24.0"
                 max="55.0"
                 step="0.5"
-                value={simValues.Max_Temp_C}
+                value={simValues?.Max_Temp_C || 32}
                 onChange={(e) => handleSliderChange("Max_Temp_C", e.target.value)}
                 className="w-full accent-cyan-400 bg-slate-800 rounded-lg h-2 cursor-pointer"
               />
@@ -859,8 +961,8 @@ export default function App() {
                 <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <Activity className="w-3.5 h-3.5 text-amber-400" /> Internal Resistance
                 </span>
-                <span className={`font-mono font-bold ${simValues.Internal_Resistance_Ohm >= 0.18 ? "text-amber-400" : "text-cyan-400"}`}>
-                  {simValues.Internal_Resistance_Ohm.toFixed(3)} Ω
+                <span className={`font-mono font-bold ${(simValues?.Internal_Resistance_Ohm || 0) >= 0.18 ? "text-amber-400" : "text-cyan-400"}`}>
+                  {formatNum(simValues?.Internal_Resistance_Ohm, 3)} Ω
                 </span>
               </div>
               <input
@@ -868,7 +970,7 @@ export default function App() {
                 min="0.065"
                 max="0.260"
                 step="0.002"
-                value={simValues.Internal_Resistance_Ohm}
+                value={simValues?.Internal_Resistance_Ohm || 0.08}
                 onChange={(e) => handleSliderChange("Internal_Resistance_Ohm", e.target.value)}
                 className="w-full accent-cyan-400 bg-slate-800 rounded-lg h-2 cursor-pointer"
               />
@@ -885,8 +987,8 @@ export default function App() {
                 <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <Zap className="w-3.5 h-3.5 text-cyan-400" /> Avg Voltage (Plateau)
                 </span>
-                <span className={`font-mono font-bold ${simValues.Avg_Voltage_V < 3.45 ? "text-rose-400" : "text-cyan-400"}`}>
-                  {simValues.Avg_Voltage_V.toFixed(2)} V
+                <span className={`font-mono font-bold ${(simValues?.Avg_Voltage_V || 0) < 3.45 ? "text-rose-400" : "text-cyan-400"}`}>
+                  {formatNum(simValues?.Avg_Voltage_V, 2)} V
                 </span>
               </div>
               <input
@@ -894,7 +996,7 @@ export default function App() {
                 min="3.10"
                 max="3.90"
                 step="0.02"
-                value={simValues.Avg_Voltage_V}
+                value={simValues?.Avg_Voltage_V || 3.8}
                 onChange={(e) => handleSliderChange("Avg_Voltage_V", e.target.value)}
                 className="w-full accent-cyan-400 bg-slate-800 rounded-lg h-2 cursor-pointer"
               />
@@ -912,7 +1014,7 @@ export default function App() {
                   <RefreshCw className="w-3.5 h-3.5 text-indigo-400" /> Cycle Count
                 </span>
                 <span className="font-mono font-bold text-cyan-400">
-                  {simValues.Cycle_Count}
+                  {simValues?.Cycle_Count || 1}
                 </span>
               </div>
               <input
@@ -920,7 +1022,7 @@ export default function App() {
                 min="1"
                 max="180"
                 step="1"
-                value={simValues.Cycle_Count}
+                value={simValues?.Cycle_Count || 1}
                 onChange={(e) => handleSliderChange("Cycle_Count", e.target.value)}
                 className="w-full accent-cyan-400 bg-slate-800 rounded-lg h-2 cursor-pointer"
               />
@@ -940,12 +1042,12 @@ export default function App() {
               </span>
               <span
                 className={`px-2.5 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1.5 ${
-                  simResult.is_anomaly
+                  simResult?.is_anomaly
                     ? "border-rose-500/50 bg-rose-500/20 text-rose-400 animate-pulse"
                     : "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
                 }`}
               >
-                {simResult.is_anomaly ? (
+                {simResult?.is_anomaly ? (
                   <>
                     <AlertTriangle className="w-3.5 h-3.5" /> ANOMALY DETECTED
                   </>
@@ -964,7 +1066,7 @@ export default function App() {
                 </span>
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-3xl font-black text-cyan-400 font-mono">
-                    {Math.round(simResult.predicted_rul)}
+                    {safeRound(simResult?.predicted_rul)}
                   </span>
                   <span className="text-xs text-slate-400">cycles</span>
                 </div>
@@ -976,10 +1078,10 @@ export default function App() {
                 </span>
                 <div className="flex items-baseline gap-1 mt-1">
                   <span className="text-3xl font-black text-white font-mono">
-                    {simResult.predicted_soh_percent.toFixed(1)}%
+                    {formatNum(simResult?.predicted_soh_percent, 1)}%
                   </span>
-                  <span className={`text-[10px] font-bold ${simResult.predicted_soh_percent <= domain.eolThreshold ? "text-rose-400" : "text-emerald-400"}`}>
-                    {simResult.predicted_soh_percent <= domain.eolThreshold ? "≤ EOL" : "> EOL"}
+                  <span className={`text-[10px] font-bold ${(simResult?.predicted_soh_percent || 0) <= domain.eolThreshold ? "text-rose-400" : "text-emerald-400"}`}>
+                    {(simResult?.predicted_soh_percent || 0) <= domain.eolThreshold ? "≤ EOL" : "> EOL"}
                   </span>
                 </div>
               </div>
@@ -988,8 +1090,8 @@ export default function App() {
             <div className="text-xs text-slate-400 space-y-1 bg-slate-950/50 p-3 rounded-lg border border-slate-800/60 font-mono">
               <div className="flex justify-between">
                 <span>Anomaly Score:</span>
-                <strong className={simResult.anomaly_score < 0 ? "text-rose-400" : "text-emerald-400"}>
-                  {simResult.anomaly_score.toFixed(4)}
+                <strong className={(simResult?.anomaly_score || 0) < 0 ? "text-rose-400" : "text-emerald-400"}>
+                  {formatNum(simResult?.anomaly_score, 4)}
                 </strong>
               </div>
               <div className="flex justify-between">
@@ -1029,12 +1131,23 @@ export default function App() {
 }
 
 // -----------------------------------------------------------------------------
+// Wrapped Root Export with ErrorBoundary
+// -----------------------------------------------------------------------------
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <BatteryMindDashboard />
+    </ErrorBoundary>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Custom Subcomponents & Tooltips
 // -----------------------------------------------------------------------------
 
 function CustomAnomalyDot(props) {
   const { cx, cy, payload } = props;
-  if (!payload || !payload.is_anomaly) {
+  if (!payload?.is_anomaly || typeof cx !== "number" || typeof cy !== "number" || isNaN(cx) || isNaN(cy)) {
     return null;
   }
   return (
@@ -1045,15 +1158,18 @@ function CustomAnomalyDot(props) {
   );
 }
 
-function CustomTrajectoryTooltip({ active, payload, label, domainThreshold }) {
-  if (!active || !payload || !payload.length) return null;
-  const data = payload[0].payload;
-  const isBelowEol = data.soh_percent <= domainThreshold;
+function CustomTrajectoryTooltip({ active, payload, domainThreshold }) {
+  if (!active || !payload?.length) return null;
+  const data = payload[0]?.payload;
+  if (!data) return null;
+
+  const soh = Number(data.soh_percent ?? data.actual_soh ?? 0);
+  const isBelowEol = soh <= (domainThreshold || 80);
 
   return (
     <div className="p-3 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl text-xs space-y-1.5 font-mono min-w-[200px]">
       <div className="flex items-center justify-between border-b border-slate-800 pb-1 font-sans">
-        <strong className="text-white font-bold">Cycle #{data.cycle_count}</strong>
+        <strong className="text-white font-bold">Cycle #{data.cycle_count ?? "--"}</strong>
         {data.is_anomaly ? (
           <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-rose-500/20 text-rose-400 border border-rose-500/40">
             ⚠️ ANOMALY
@@ -1065,35 +1181,38 @@ function CustomTrajectoryTooltip({ active, payload, label, domainThreshold }) {
       <div className="flex justify-between text-cyan-400">
         <span>SOH %:</span>
         <strong className={isBelowEol ? "text-rose-400" : "text-cyan-400"}>
-          {data.soh_percent.toFixed(2)}%
+          {formatNum(soh, 2)}%
         </strong>
       </div>
       <div className="flex justify-between text-indigo-400">
         <span>Capacity:</span>
-        <strong>{data.discharge_capacity_ah} Ah</strong>
+        <strong>{formatNum(data.discharge_capacity_ah, 4)} Ah</strong>
       </div>
       <div className="flex justify-between text-slate-300">
         <span>Predicted RUL:</span>
-        <strong className="text-cyan-300">{Math.round(data.predicted_rul)} cyc</strong>
+        <strong className="text-cyan-300">{safeRound(data.predicted_rul ?? data.actual_rul)} cyc</strong>
       </div>
       <div className="flex justify-between text-slate-400">
         <span>Max Temp:</span>
-        <strong className={data.max_temp_c >= 45 ? "text-rose-400" : "text-slate-200"}>
-          {data.max_temp_c} °C
+        <strong className={(data.max_temp_c || 0) >= 45 ? "text-rose-400" : "text-slate-200"}>
+          {formatNum(data.max_temp_c, 1)} °C
         </strong>
       </div>
       <div className="flex justify-between text-slate-400">
         <span>Internal Res:</span>
-        <strong className="text-slate-200">{data.internal_resistance_ohm} Ω</strong>
+        <strong className="text-slate-200">{formatNum(data.internal_resistance_ohm, 4)} Ω</strong>
       </div>
     </div>
   );
 }
 
 function CustomShapTooltip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
-  const data = payload[0].payload;
-  const isPos = data.impact >= 0;
+  if (!active || !payload?.length) return null;
+  const data = payload[0]?.payload;
+  if (!data) return null;
+
+  const impact = Number(data.impact || 0);
+  const isPos = impact >= 0;
 
   return (
     <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-700 shadow-xl text-xs font-mono">
@@ -1102,7 +1221,7 @@ function CustomShapTooltip({ active, payload }) {
       </div>
       <div className={`font-bold ${isPos ? "text-emerald-400" : "text-rose-400"}`}>
         {isPos ? "+" : ""}
-        {data.impact.toFixed(2)} cycles
+        {formatNum(impact, 2)} cycles
       </div>
       <div className="text-[10px] text-slate-400 mt-1 font-sans">
         {isPos

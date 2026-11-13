@@ -135,6 +135,7 @@ class ModelStore:
                     "predicted_rul": float(row["Predicted_RUL"]),
                     "actual_soh": float(row["SOH_Percent"]),
                     "predicted_soh": float(row["Predicted_SOH"]),
+                    "soh_percent": float(row["SOH_Percent"]),
                     "is_anomaly": is_anom,
                     "anomaly_score": float(row["Anomaly_Score"]),
                 })
