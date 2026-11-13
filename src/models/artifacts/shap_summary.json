@@ -1,0 +1,88 @@
+{
+  "target_explained": "Remaining_Useful_Life_RUL",
+  "global_importance_ranking": [
+    {
+      "rank": 1,
+      "feature": "Internal_Resistance_Ohm",
+      "mean_abs_shap": 22.3689
+    },
+    {
+      "rank": 2,
+      "feature": "Discharge_Capacity_Ah",
+      "mean_abs_shap": 15.9694
+    },
+    {
+      "rank": 3,
+      "feature": "Cycle_Count",
+      "mean_abs_shap": 2.6336
+    },
+    {
+      "rank": 4,
+      "feature": "Avg_Voltage_V",
+      "mean_abs_shap": 0.4378
+    },
+    {
+      "rank": 5,
+      "feature": "Max_Temp_C",
+      "mean_abs_shap": 0.3833
+    },
+    {
+      "rank": 6,
+      "feature": "Avg_Current_A",
+      "mean_abs_shap": 0.1233
+    },
+    {
+      "rank": 7,
+      "feature": "Ambient_Temp_C",
+      "mean_abs_shap": 0.1219
+    }
+  ],
+  "sample_cycle_explanations": {
+    "cycle_1": {
+      "cycle_number": 1,
+      "base_value_rul": 69.12,
+      "feature_contributions": {
+        "Internal_Resistance_Ohm": 43.4128,
+        "Discharge_Capacity_Ah": 23.5704,
+        "Cycle_Count": 6.6379,
+        "Max_Temp_C": 2.2634,
+        "Avg_Voltage_V": 0.53,
+        "Avg_Current_A": 0.3138,
+        "Ambient_Temp_C": 0.2612
+      }
+    },
+    "cycle_67": {
+      "cycle_number": 67,
+      "base_value_rul": 69.12,
+      "feature_contributions": {
+        "Discharge_Capacity_Ah": -8.0813,
+        "Internal_Resistance_Ohm": 1.3056,
+        "Max_Temp_C": -1.0641,
+        "Cycle_Count": 1.0394,
+        "Avg_Voltage_V": -0.3977,
+        "Ambient_Temp_C": 0.13,
+        "Avg_Current_A": 0.0258
+      }
+    },
+    "cycle_132": {
+      "cycle_number": 132,
+      "base_value_rul": 69.12,
+      "feature_contributions": {
+        "Internal_Resistance_Ohm": -31.2748,
+        "Discharge_Capacity_Ah": -30.1172,
+        "Cycle_Count": -3.881,
+        "Avg_Voltage_V": -0.485,
+        "Max_Temp_C": -0.1877,
+        "Ambient_Temp_C": -0.0705,
+        "Avg_Current_A": -0.0525
+      }
+    }
+  },
+  "physics_interpretation": {
+    "Discharge_Capacity_Ah": "Direct measure of retained active lithium; drops strongly reduce RUL.",
+    "Internal_Resistance_Ohm": "Growth of SEI passivation layer and electrolyte decay accelerates RUL drop.",
+    "Cycle_Count": "Linear base accumulation of wear and thermal aging.",
+    "Max_Temp_C": "Elevated operating temperatures indicate higher Joule heating from increased impedance.",
+    "Avg_Voltage_V": "Lower average voltage plateau reflects higher internal polarization losses."
+  }
+}

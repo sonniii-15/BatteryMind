@@ -1,0 +1,49 @@
+{
+  "model_architecture": "XGBoost Multi-Target Regressor",
+  "anomaly_detector": "Isolation Forest",
+  "explainer": "SHAP TreeExplainer",
+  "features": [
+    "Cycle_Count",
+    "Ambient_Temp_C",
+    "Avg_Voltage_V",
+    "Avg_Current_A",
+    "Max_Temp_C",
+    "Internal_Resistance_Ohm",
+    "Discharge_Capacity_Ah"
+  ],
+  "targets": [
+    "Remaining_Useful_Life_RUL",
+    "SOH_Percent"
+  ],
+  "train_cells": [
+    "B0005",
+    "B0006",
+    "B0007"
+  ],
+  "test_cell": "B0018",
+  "train_samples": 504,
+  "test_samples": 132,
+  "metrics": {
+    "Remaining_Useful_Life_RUL": {
+      "rmse": 23.15578609521819,
+      "mae": 20.248247146606445,
+      "r2": 0.5419979095458984
+    },
+    "SOH_Percent": {
+      "rmse": 1.3385367610367143,
+      "mae": 1.1291686549331204,
+      "r2": 0.9772370227028327
+    }
+  },
+  "anomaly_detection": {
+    "contamination": 0.03,
+    "test_total_cycles": 132,
+    "test_anomalies_detected": 3,
+    "anomalous_cycles": [
+      100,
+      124,
+      131
+    ]
+  },
+  "random_seed": 42
+}
