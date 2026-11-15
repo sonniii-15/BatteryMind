@@ -795,6 +795,7 @@ function BatteryMindDashboard() {
                     strokeWidth={2.2}
                     dot={<CustomAnomalyDot />}
                     activeDot={{ r: 6, fill: "#06B6D4" }}
+                    isAnimationActive={false}
                   />
                   <Line
                     yAxisId="cap"
@@ -805,6 +806,7 @@ function BatteryMindDashboard() {
                     strokeWidth={1.5}
                     strokeDasharray="2 2"
                     dot={false}
+                    isAnimationActive={false}
                   />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -862,7 +864,7 @@ function BatteryMindDashboard() {
                 />
                 <Tooltip content={<CustomShapTooltip />} />
                 <ReferenceLine x={0} stroke="#475569" strokeWidth={1.5} />
-                <Bar dataKey="impact" radius={[4, 4, 4, 4]}>
+                <Bar dataKey="impact" radius={[4, 4, 4, 4]} isAnimationActive={false}>
                   {shapChartData.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
